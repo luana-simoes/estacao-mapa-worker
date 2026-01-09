@@ -5,6 +5,8 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs').promises;
 const path = require('path');
+const { executeWithRetry, notificarErro } = require('./retry');
+const { obterStatusSaude } = require('./health');
 
 const execAsync = promisify(exec);
 
@@ -39,9 +41,19 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'worker-formatacao-mapa' });
+// Health check detalhado
+app.get('/health', async (req, res) => {
+  try {
+    const healthStatus = await obterStatusSaude();
+    const statusCode = healthStatus.status === 'healthy' ? 200 : 503;
+    res.status(statusCode).json(healthStatus);
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 });
 
 // Endpoint principal de formatação
@@ -80,14 +92,27 @@ async function processarFormatacao(jobId, documentoId, estruturaJson, dadosBasic
 
     console.log(`[JOB ${jobId}] Diretório temporário criado: ${tempDir}`);
 
-    // 1. Baixar template do Supabase
+    // 1. Baixar template do Supabase (com retry)
     const templateNome = `template_${normaFormatacao || 'abnt'}.docx`;
     const templatePath = path.join(tempDir, templateNome);
     
-    const { data: templateData, error: templateError } = await supabase
-      .storage
-      .from('templates-formatacao')
-      .download(templateNome);
+    const { data: templateData, error: templateError } = await executeWithRetry(
+      async () => {
+        const result = await supabase
+          .storage
+          .from('templates-formatacao')
+          .download(templateNome);
+        
+        if (result.error) {
+          throw new Error(`Erro ao baixar template: ${result.error.message}`);
+        }
+        
+        return result;
+      },
+      3,
+      2000,
+      `Download do template ${templateNome}`
+    );
 
     if (templateError) {
       throw new Error(`Erro ao baixar template: ${templateError.message}`);
@@ -128,17 +153,30 @@ async function processarFormatacao(jobId, documentoId, estruturaJson, dadosBasic
 
     console.log(`[JOB ${jobId}] Processamento concluído`);
 
-    // 4. Fazer upload do arquivo final para Supabase Storage
+    // 4. Fazer upload do arquivo final para Supabase Storage (com retry)
     const arquivoFinal = await fs.readFile(outputPath);
     const arquivoNome = `documento_${documentoId}_${Date.now()}.docx`;
 
-    const { data: uploadData, error: uploadError } = await supabase
-      .storage
-      .from('documentos-formatados')
-      .upload(arquivoNome, arquivoFinal, {
-        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        upsert: false,
-      });
+    const { data: uploadData, error: uploadError } = await executeWithRetry(
+      async () => {
+        const result = await supabase
+          .storage
+          .from('documentos-formatados')
+          .upload(arquivoNome, arquivoFinal, {
+            contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            upsert: false,
+          });
+        
+        if (result.error) {
+          throw new Error(`Erro ao fazer upload: ${result.error.message}`);
+        }
+        
+        return result;
+      },
+      3,
+      2000,
+      `Upload do documento ${arquivoNome}`
+    );
 
     if (uploadError) {
       throw new Error(`Erro ao fazer upload: ${uploadError.message}`);
@@ -178,6 +216,9 @@ async function processarFormatacao(jobId, documentoId, estruturaJson, dadosBasic
 
   } catch (error) {
     console.error(`[JOB ${jobId}] Erro fatal:`, error);
+
+    // Notificar erro
+    await notificarErro(jobId, error, 'Processamento de formatação');
 
     // Atualizar job com erro
     await supabase
