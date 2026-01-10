@@ -50,36 +50,9 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * Envia notificação de erro (pode ser expandido para integrar com Slack, email, etc.)
- * @param {string} jobId - ID do job
- * @param {Error} error - Erro ocorrido
- * @param {string} context - Contexto do erro
- */
-async function notificarErro(jobId, error, context) {
-  const errorData = {
-    jobId,
-    context,
-    message: error.message,
-    stack: error.stack,
-    timestamp: new Date().toISOString(),
-  };
-  
-  console.error('[NOTIFICAÇÃO DE ERRO]', JSON.stringify(errorData, null, 2));
-  
-  // TODO: Integrar com serviço de notificação (Slack, email, etc.)
-  // Exemplo:
-  // await fetch('https://hooks.slack.com/services/YOUR/WEBHOOK/URL', {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({
-  //     text: `❌ Erro no Worker de Formatação\nJob: ${jobId}\nContexto: ${context}\nErro: ${error.message}`
-  //   })
-  // });
-}
+// Função de notificação movida para notificacoes.js
 
 module.exports = {
   executeWithRetry,
   sleep,
-  notificarErro,
 };

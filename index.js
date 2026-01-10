@@ -5,7 +5,8 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const fs = require('fs').promises;
 const path = require('path');
-const { executeWithRetry, notificarErro } = require('./retry');
+const { executeWithRetry } = require('./retry');
+const { notificarErroProcessamento, notificarIntegracaoFalhou, notificarErroCritico } = require('./notificacoes');
 const { obterStatusSaude } = require('./health');
 
 const execAsync = promisify(exec);
@@ -217,8 +218,14 @@ async function processarFormatacao(jobId, documentoId, estruturaJson, dadosBasic
   } catch (error) {
     console.error(`[JOB ${jobId}] Erro fatal:`, error);
 
-    // Notificar erro
-    await notificarErro(jobId, error, 'Processamento de formatação');
+    // Notificar erro ao painel administrativo
+    await notificarErroProcessamento(
+      jobId,
+      'Formatação de documento',
+      error,
+      null, // usuario_id (adicionar se disponível no job)
+      { documentoId, normaFormatacao }
+    );
 
     // Atualizar job com erro
     await supabase
