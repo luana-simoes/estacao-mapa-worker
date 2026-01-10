@@ -60,10 +60,12 @@ async function enviarNotificacaoAdmin({
       usuario_afetado,
       dados_contexto,
       acao_sugerida,
-      criada_em: new Date().toISOString(),
-      lida: false,
-      resolvida: false,
-    };
+    criada_em: new Date().toISOString(),
+    lida: false,
+    resolvida: false,
+    enviada_push: false,
+    enviada_email: false,
+  };
 
     const { data, error } = await supabase
       .from('notificacoes_admin')
