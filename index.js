@@ -8,6 +8,7 @@ const path = require('path');
 const { executeWithRetry } = require('./retry');
 const { notificarErroProcessamento, notificarIntegracaoFalhou, notificarErroCritico } = require('./notificacoes');
 const { obterStatusSaude } = require('./health');
+const { enqueueFormatacao, getTaskStatus, getQueueSize } = require('./queue');
 
 const execAsync = promisify(exec);
 
@@ -57,9 +58,9 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Endpoint principal de formatação
+// Endpoint principal de formatação (com fila)
 app.post('/formatar', authMiddleware, async (req, res) => {
-  const { jobId, documentoId, estruturaJson, dadosBasicos, normaFormatacao } = req.body;
+  const { jobId, documentoId, estruturaJson, dadosBasicos, normaFormatacao, useQueue = true } = req.body;
 
   console.log(`[JOB ${jobId}] Iniciando formatação do documento ${documentoId}`);
 
@@ -69,7 +70,18 @@ app.post('/formatar', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Dados incompletos' });
     }
 
-    // Responder imediatamente (processamento assíncrono)
+    // Se useQueue=true, adicionar à fila e retornar imediatamente
+    if (useQueue) {
+      try {
+        await enqueueFormatacao(jobId, documentoId, estruturaJson, dadosBasicos, normaFormatacao);
+        return res.json({ success: true, message: 'Tarefa adicionada à fila', jobId });
+      } catch (queueError) {
+        console.warn('⚠️ Erro ao adicionar à fila, processando sincronamente:', queueError);
+        // Continuar para processamento síncrono em caso de erro
+      }
+    }
+
+    // Processamento síncrono (fallback ou quando useQueue=false)
     res.json({ success: true, message: 'Processamento iniciado' });
 
     // Processar em background
@@ -81,6 +93,27 @@ app.post('/formatar', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error(`[JOB ${jobId}] Erro:`, error);
     res.status(500).json({ error: 'Erro ao processar formatação' });
+  }
+});
+
+// Endpoint para verificar status da tarefa
+app.get('/status/:jobId', authMiddleware, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    const status = await getTaskStatus(jobId);
+    res.json(status);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint para verificar tamanho da fila
+app.get('/queue/size', authMiddleware, async (req, res) => {
+  try {
+    const size = await getQueueSize();
+    res.json({ queueSize: size });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
